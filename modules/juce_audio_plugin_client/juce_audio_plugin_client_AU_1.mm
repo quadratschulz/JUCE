@@ -2401,7 +2401,10 @@ private:
             auto initialValue = param->getValue();
             bool paramIsLegacy = dynamic_cast<LegacyAudioParameter*> (param) != nullptr;
 
-            if (param->isDiscrete() && (! forceUseLegacyParamIDs))
+            // LOCAL PATCH: also build value strings with legacy param IDs --
+            // without them GetParameterValueStrings returns an error and generic
+            // host views get no value menus for indexed parameters.
+            if (param->isDiscrete())
             {
                 const auto numSteps = param->getNumSteps();
                 stringValues = new OwnedArray<const __CFString>();

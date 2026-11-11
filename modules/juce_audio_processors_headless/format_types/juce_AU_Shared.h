@@ -431,9 +431,27 @@ struct AudioUnitHelpers
             return sets;
         });
 
-        std::vector<char> inputHasOutputRestrictions (layoutsToTry.size()), outputHasInputRestrictions (layoutsToTry.size());
+        // LOCAL PATCH: also probe the input bus DISABLED (0 channels), so
+        // a synth with an optional side-chain input reports both the
+        // configurations without input (Logic's instrument slot needs one)
+        // and those with it (Logic's side-chain menu needs one). Stock
+        // JUCE tries only layouts of 1 channel and more whenever an input
+        // bus exists. The disabled set has size 0, so the input list stays
+        // sorted by size, as findDistance requires.
+        const auto inputLayoutsToTry = std::invoke ([&]
+        {
+            std::vector<AudioChannelSet> sets;
 
-        for (const auto [inputIndex, inputLayout] : enumerate (layoutsToTry))
+            if (hasMainInputBus)
+                sets.push_back (AudioChannelSet::disabled());
+
+            sets.insert (sets.end(), layoutsToTry.begin(), layoutsToTry.end());
+            return sets;
+        });
+
+        std::vector<char> inputHasOutputRestrictions (inputLayoutsToTry.size()), outputHasInputRestrictions (layoutsToTry.size());
+
+        for (const auto [inputIndex, inputLayout] : enumerate (inputLayoutsToTry))
         {
             for (const auto [outputIndex, outputLayout] : enumerate (layoutsToTry))
             {
@@ -490,22 +508,25 @@ struct AudioUnitHelpers
 
         for (auto& c : supportedChannels)
         {
-            const auto findDistance = [&] (auto channelCount)
+            const auto findDistance = [&] (const auto& layouts, auto channelCount)
             {
-                return std::distance (layoutsToTry.begin(),
-                                      std::lower_bound (layoutsToTry.begin(),
-                                                        layoutsToTry.end(),
+                return std::distance (layouts.begin(),
+                                      std::lower_bound (layouts.begin(),
+                                                        layouts.end(),
                                                         channelCount,
                                                         [] (auto a, auto b) { return a.size() < b; }));
             };
 
+            // LOCAL PATCH: 'restrictions' is indexed by 'otherLayouts' (the
+            // input list carries the disabled set in front).
             const auto findChannelCount = [&] (auto& restrictions,
+                                               const auto& otherLayouts,
                                                auto thisChannelCount,
                                                auto otherChannelCount,
                                                auto hasMainBus)
             {
-                const auto lower = findDistance (otherChannelCount);
-                const auto upper = findDistance (otherChannelCount + 1);
+                const auto lower = findDistance (otherLayouts, otherChannelCount);
+                const auto upper = findDistance (otherLayouts, otherChannelCount + 1);
 
                 const auto wildcard = std::all_of (restrictions.begin() + lower,
                                                    restrictions.begin() + upper,
@@ -515,8 +536,8 @@ struct AudioUnitHelpers
                 return hasMainBus ? wildcard : (SInt16) 0;
             };
 
-            const auto ins  = findChannelCount (outputHasInputRestrictions, c.ins, c.outs, hasMainInputBus);
-            const auto outs = findChannelCount (inputHasOutputRestrictions, c.outs, c.ins, hasMainOutputBus);
+            const auto ins  = findChannelCount (outputHasInputRestrictions, layoutsToTry,      c.ins,  c.outs, hasMainInputBus);
+            const auto outs = findChannelCount (inputHasOutputRestrictions, inputLayoutsToTry, c.outs, c.ins,  hasMainOutputBus);
 
             const Channels layout { ins, outs };
             filteredChannels.insert (layout == Channels { -1, -1 } ? c : layout);
